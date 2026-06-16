@@ -1,0 +1,45 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+
+# OpenCode 参考目录（仅本地使用，不提交）
+/reference/
+/references/
+
+# IDE patterns
+.DS_Store
+*.iml
+*.iws
+
+# HarmonyOS specific
+.preview/
+build/
+.output/
+.diagnose/
+oh_modules/
+node_modules/
+
+# Local configuration
+local.properties
+signing.properties
+
+# ArkUI-X Android artifacts
+.arkui-x/android/.gradle/
+.arkui-x/android/app/src/main/assets/
+.arkui-x/android/app/libs/
+.arkui-x/android/app/build/
+
+# Log files
+*.log
+logs/
+
+build-profile.json5.local

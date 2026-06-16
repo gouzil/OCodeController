@@ -1,0 +1,1805 @@
+import dataPreferences from '@ohos.data.preferences';
+import common from '@ohos.app.ability.common';
+import http from '@ohos.net.http';
+import util from '@ohos.util';
+import { OpenCodeApiClient, OpenCodeSession, OpenCodeMessage } from './OpenCodeApiClient';
+
+export { OpenCodeSession, OpenCodeMessage, OpenCodeProviderModel } from './OpenCodeApiClient';
+export type { TextPartInput, OpenCodeMessagePart } from './OpenCodeApiClient';
+
+export interface OpenCodeProject {
+  id: string;
+  name: string;
+  url: string;
+  username: string;
+  authToken: string;
+  path: string;
+  notes: string;
+  backendId: string;
+  remoteSessionId?: string;
+  preferredModel?: string;
+  lastAccess: number;
+  draft?: string;
+  // hasPendingWork: 由 isWorking || unreadCount 派生，表示有待处理事项
+  isWorking: boolean;
+  unreadCount: number;
+}
+
+export interface ChatSession {
+  id: string;
+  name: string;
+  backendUrl: string;
+  backendId: string;
+  directory: string;
+  remoteSessionId?: string;
+  updatedAt: string;
+  updatedAtTimestamp: number;
+}
+
+export interface OpenCodeBackend {
+  id: string;
+  url: string;
+  username: string;
+  authToken: string;
+  notes: string;
+  source?: string;
+}
+
+export interface SyncBackend {
+  id: string;
+  backend_url: string;
+  username: string | null;
+  auth_token: string | null;
+  remark: string | null;
+}
+
+export interface SyncSession {
+  id: string;
+  title: string | null;
+  backend_url: string | null;
+  backend_id: string | null;
+  directory: string | null;
+  remote_session_id: string | null;
+  preferred_model: string | null;
+  last_access: string | null;
+}
+
+export interface SyncRequest {
+  backends: SyncBackend[];
+  sessions: SyncSession[];
+}
+
+export interface SyncResponse {
+  backends: SyncBackend[];
+  sessions: SyncSession[];
+}
+
+export interface PendingMessage {
+  projectId: string;
+  sessionId: string;
+  loadingId: string;
+  text: string;
+  model?: string;
+  isLoading: boolean;
+}
+
+export type MessageCallback = (result: { response: OpenCodeMessage | null; error: string | null; loadingId: string }) => void;
+
+export interface StreamMessageUpdate {
+  sessionID: string;
+  messageID: string;
+  delta: string;
+  isComplete: boolean;
+  message?: OpenCodeMessage;
+}
+
+export type StreamMessageCallback = (update: StreamMessageUpdate) => void;
+
+export interface SseEventBase {
+  id?: string;
+  type: string;
+  properties: object;
+  directory?: string;
+}
+
+export interface ServerConnectedEvent extends SseEventBase {
+  type: 'server.connected';
+}
+
+export interface ServerHeartbeatEvent extends SseEventBase {
+  type: 'server.heartbeat';
+}
+
+export interface ServerInstanceDisposedEvent extends SseEventBase {
+  type: 'server.instance.disposed';
+}
+
+export type SessionStatusType = 'idle' | 'busy' | 'retry';
+
+export interface SessionStatusProperties {
+  sessionID: string;
+  status: {
+    type: SessionStatusType;
+    attempt?: number;
+    message?: string;
+    next?: number;
+  };
+}
+
+export interface SessionStatusEvent extends SseEventBase {
+  type: 'session.status';
+  properties: SessionStatusProperties;
+}
+
+export interface SessionIdleEvent extends SseEventBase {
+  type: 'session.idle';
+  properties: { sessionID: string };
+}
+
+export interface SessionCompactedEvent extends SseEventBase {
+  type: 'session.compacted';
+  properties: { sessionID: string };
+}
+
+export interface PermissionProperties {
+  id: string;
+  type: string;
+  pattern?: string | string[];
+  sessionID: string;
+  messageID: string;
+  callID?: string;
+  title: string;
+  metadata: Record<string, Object>;
+  time: { created: number };
+}
+
+export interface PermissionUpdatedEvent extends SseEventBase {
+  type: 'permission.updated';
+  properties: PermissionProperties;
+}
+
+export interface PermissionRepliedEvent extends SseEventBase {
+  type: 'permission.replied';
+  properties: {
+    sessionID: string;
+    permissionID: string;
+    response: string;
+  };
+}
+
+export interface MessageInfo {
+  id: string;
+  sessionID: string;
+  role: 'user' | 'assistant';
+  parts: Array<{
+    id: string;
+    type: string;
+    text?: string;
+  }>;
+  finish?: string;
+  time?: { start: number; end?: number };
+}
+
+export interface MessageUpdatedEvent extends SseEventBase {
+  type: 'message.updated';
+  properties: {
+    info: MessageInfo;
+  };
+}
+
+export interface MessagePartUpdatedEvent extends SseEventBase {
+  type: 'message.part.updated';
+  properties: {
+    sessionID: string;
+    messageID: string;
+    part: {
+      id: string;
+      type: string;
+      text?: string;
+    };
+  };
+}
+
+export interface TextDeltaEvent extends SseEventBase {
+  type: 'text.delta';
+  properties: {
+    sessionID: string;
+    messageID: string;
+    delta: string;
+  };
+}
+
+export interface MessagePartDeltaEvent extends SseEventBase {
+  type: 'message.part.delta';
+  properties: {
+    sessionID: string;
+    messageID: string;
+    part: {
+      id: string;
+      type: string;
+      text?: string;
+    };
+  };
+}
+
+export type SseEvent =
+  | ServerConnectedEvent
+  | ServerHeartbeatEvent
+  | ServerInstanceDisposedEvent
+  | SessionStatusEvent
+  | SessionIdleEvent
+  | SessionCompactedEvent
+  | PermissionUpdatedEvent
+  | PermissionRepliedEvent
+  | MessageUpdatedEvent
+  | MessagePartUpdatedEvent
+  | MessagePartDeltaEvent
+  | TextDeltaEvent
+  | SseEventBase;
+
+export type SseEventCallback = (event: SseEvent) => void;
+
+// 会话变更事件类型
+export type SessionsChangedCallback = (timestamp: number) => void;
+
+export interface ContainerInfo {
+  id: string;
+  name: string;
+  port: number | null;
+  opencode_url: string | null;
+  opencode_username: string | null;
+  opencode_password: string | null;
+  filebrowser_url: string | null;
+  fb_username: string | null;
+  fb_password: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export class OpenCodeCore {
+  private static instance: OpenCodeCore;
+  private projects: OpenCodeProject[] = [];
+  private backends: OpenCodeBackend[] = [];
+  private currentProjectId: string = '';
+  private currentSessionId: string = '';
+  private preferences: dataPreferences.Preferences | null = null;
+  private context: common.UIAbilityContext | null = null;
+  private apiClient: OpenCodeApiClient = new OpenCodeApiClient();
+  private static readonly PREF_NAME = 'opencode_data';
+  private static readonly KEY_BACKENDS = 'backends';
+  private static readonly KEY_PROJECTS = 'projects';
+  private static readonly KEY_IMMERSIVE_MODE = 'immersiveMode';
+  private static readonly KEY_DISPLAY_USERNAME = 'displayUsername';
+  private static readonly KEY_ROTATION_LOCKED = 'rotationLocked';
+  private static readonly KEY_THEME_NAME = 'themeName';
+  private static readonly KEY_DARK_MODE = 'darkMode';
+  private static readonly KEY_MESSAGES = 'messages';
+  private static readonly KEY_MESSAGE_LOAD_MODE = 'messageLoadMode';
+  private static readonly KEY_ACCOUNT_SERVER_URL = 'accountServerUrl';
+  private static readonly KEY_ACCOUNT_TOKEN = 'accountToken';
+  private static readonly DEFAULT_ACCOUNT_SERVER_URL = 'https://ocodecontroller.liyulingyue.com';
+
+  public static readonly THEME_NAMES: string[] = [
+    '极光绿', '樱花粉', '天空蓝', '日落橙', '薰衣草'
+  ];
+
+  // SSE 流式开关：true 启用 SSE 流式，false 禁用 SSE 回退到 HTTP 轮询
+  public static SSE_ENABLED: boolean = false;
+
+  private pendingRequest: http.HttpRequest | null = null;
+  private pendingMessage: PendingMessage | null = null;
+  private messageCallback: MessageCallback | null = null;
+  private sseRequest: http.HttpRequest | null = null;
+  private sseBuffer: string = '';
+  private sseEventCallback: SseEventCallback | null = null;
+  private streamMessageCallback: StreamMessageCallback | null = null;
+  private sessionsChangedCallback: SessionsChangedCallback | null = null;
+  private leftCurrentProject: boolean = false;
+
+  private constructor() {}
+
+  public static getInstance(): OpenCodeCore {
+    if (!OpenCodeCore.instance) {
+      OpenCodeCore.instance = new OpenCodeCore();
+    }
+    return OpenCodeCore.instance;
+  }
+
+  public async init(context: common.UIAbilityContext): Promise<void> {
+    this.context = context;
+    try {
+      this.preferences = await dataPreferences.getPreferences(context, OpenCodeCore.PREF_NAME);
+      await this.loadFromStorage();
+      console.info('[OpenCodeCore] Persistence initialized, backends:', this.backends.length);
+    } catch (err) {
+      console.error('[OpenCodeCore] Persistence init failed:', JSON.stringify(err));
+    }
+  }
+
+  public getContext(): common.UIAbilityContext | null {
+    return this.context;
+  }
+
+  // 注册会话变更监听器
+  public setSessionsChangedCallback(callback: SessionsChangedCallback | null): void {
+    this.sessionsChangedCallback = callback;
+  }
+
+  // 触发会话变更事件
+  private notifySessionsChanged(): void {
+    if (this.sessionsChangedCallback) {
+      this.sessionsChangedCallback(Date.now());
+    }
+  }
+
+  private async loadFromStorage(): Promise<void> {
+    if (!this.preferences) return;
+
+    try {
+      const backendsJson = await this.preferences.get(OpenCodeCore.KEY_BACKENDS, '[]') as string;
+      this.backends = JSON.parse(backendsJson) as OpenCodeBackend[];
+
+      const projectsJson = await this.preferences.get(OpenCodeCore.KEY_PROJECTS, '[]') as string;
+      this.projects = JSON.parse(projectsJson) as OpenCodeProject[];
+      // 补充旧数据缺失字段
+      for (const p of this.projects) {
+        if (p.isWorking === undefined) { p.isWorking = false; }
+        if (p.unreadCount === undefined) { p.unreadCount = 0; }
+      }
+      const models = this.projects.map(p => ({ id: p.id, preferredModel: p.preferredModel }));
+      console.info('[OpenCodeCore] loadProjects, count:', this.projects.length, 'models:', JSON.stringify(models));
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to load from storage:', err);
+      this.backends = [];
+      this.projects = [];
+    }
+  }
+
+  private async saveBackends(): Promise<void> {
+    if (!this.preferences) return;
+
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_BACKENDS, JSON.stringify(this.backends));
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save backends:', err);
+    }
+  }
+
+  private async saveProjects(): Promise<void> {
+    if (!this.preferences) return;
+
+    try {
+      const models = this.projects.map(p => ({ id: p.id, preferredModel: p.preferredModel }));
+      console.info('[OpenCodeCore] saveProjects, projects count:', this.projects.length, 'models:', JSON.stringify(models));
+      await this.preferences.put(OpenCodeCore.KEY_PROJECTS, JSON.stringify(this.projects));
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save projects:', err);
+    }
+  }
+
+  public getImmersiveMode(): boolean {
+    if (!this.preferences) return true;
+    try {
+      const val = this.preferences.getSync(OpenCodeCore.KEY_IMMERSIVE_MODE, 'true') as string;
+      return val === 'true';
+    } catch {
+      return true;
+    }
+  }
+
+  public async setImmersiveMode(value: boolean): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_IMMERSIVE_MODE, value.toString());
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save immersiveMode:', err);
+    }
+  }
+
+  public getDisplayUsername(): string {
+    if (!this.preferences) return '';
+    try {
+      return this.preferences.getSync(OpenCodeCore.KEY_DISPLAY_USERNAME, '') as string;
+    } catch {
+      return '';
+    }
+  }
+
+  public async setDisplayUsername(value: string): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_DISPLAY_USERNAME, value);
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save displayUsername:', err);
+    }
+  }
+
+  public isRotationLocked(): boolean {
+    if (!this.preferences) return false;
+    try {
+      const val = this.preferences.getSync(OpenCodeCore.KEY_ROTATION_LOCKED, 'false') as string;
+      return val === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  public async setRotationLocked(value: boolean): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_ROTATION_LOCKED, value.toString());
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save rotationLocked:', err);
+    }
+  }
+
+  public getThemeName(): string {
+    if (!this.preferences) return '极光绿';
+    try {
+      return this.preferences.getSync(OpenCodeCore.KEY_THEME_NAME, '极光绿') as string;
+    } catch {
+      return '极光绿';
+    }
+  }
+
+  public async setThemeName(value: string): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_THEME_NAME, value);
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save themeName:', err);
+    }
+  }
+
+  public getDarkMode(): boolean {
+    if (!this.preferences) return false;
+    try {
+      return this.preferences.getSync(OpenCodeCore.KEY_DARK_MODE, false) as boolean;
+    } catch {
+      return false;
+    }
+  }
+
+  public async setDarkMode(value: boolean): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_DARK_MODE, value);
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save darkMode:', err);
+    }
+  }
+
+  public getMessageLoadMode(): string {
+    if (!this.preferences) return 'all';
+    try {
+      return this.preferences.getSync(OpenCodeCore.KEY_MESSAGE_LOAD_MODE, 'all') as string;
+    } catch {
+      return 'all';
+    }
+  }
+
+  public async setMessageLoadMode(value: string): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_MESSAGE_LOAD_MODE, value);
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save messageLoadMode:', err);
+    }
+  }
+
+  public getAccountServerUrl(): string {
+    if (!this.preferences) return OpenCodeCore.DEFAULT_ACCOUNT_SERVER_URL;
+    try {
+      const stored = this.preferences.getSync(OpenCodeCore.KEY_ACCOUNT_SERVER_URL, '') as string;
+      return stored ? stored : OpenCodeCore.DEFAULT_ACCOUNT_SERVER_URL;
+    } catch {
+      return OpenCodeCore.DEFAULT_ACCOUNT_SERVER_URL;
+    }
+  }
+
+  public async setAccountServerUrl(value: string): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_ACCOUNT_SERVER_URL, value);
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save accountServerUrl:', err);
+    }
+  }
+
+  public getAccountToken(): string {
+    if (!this.preferences) return '';
+    try {
+      return this.preferences.getSync(OpenCodeCore.KEY_ACCOUNT_TOKEN, '') as string;
+    } catch {
+      return '';
+    }
+  }
+
+  public async setAccountToken(value: string): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      await this.preferences.put(OpenCodeCore.KEY_ACCOUNT_TOKEN, value);
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to save accountToken:', err);
+    }
+  }
+
+  public async clearAccount(): Promise<void> {
+    await this.setAccountToken('');
+    AppStorage.setOrCreate('isLoggedIn', false);
+  }
+
+  public async redeemCode(code: string): Promise<{ success: boolean; message: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, message: '未配置账户服务器或未登录' };
+    }
+
+    interface RedeemBody {
+      code: string;
+    }
+    const body: RedeemBody = { code: code };
+
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        `${accountUrl.replace(/\/+$/, '')}/api/auth/redeem`,
+        {
+          method: http.RequestMethod.POST,
+          header: {
+            'Authorization': 'Bearer ' + accountToken,
+            'Content-Type': 'application/json',
+          },
+          extraData: JSON.stringify(body),
+          connectTimeout: 15000,
+          readTimeout: 15000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, message: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            resolve({ success: true, message: '升级成功' });
+          } else if (data.responseCode === 401) {
+            this.clearAccount();
+            resolve({ success: false, message: '未授权，请重新登录' });
+          } else {
+            try {
+              const errBody = JSON.parse(data.result as string) as { detail?: string };
+              resolve({ success: false, message: errBody.detail || '兑换失败' });
+            } catch {
+              resolve({ success: false, message: `兑换失败 (${data.responseCode})` });
+            }
+          }
+        }
+      );
+    });
+  }
+
+  public applyTheme(name: string, darkMode?: boolean): void {
+    interface ThemeColors {
+      themeAccent: string;
+      themeBgPrimary: string;
+      themeBgSecondary: string;
+      themeBgCard: string;
+      themeTextPrimary: string;
+      themeTextSecondary: string;
+      themeTextTertiary: string;
+      themeTextMuted: string;
+      themeBorderPrimary: string;
+      themeBorderSecondary: string;
+      themeDivider: string;
+      themeChatUserBg: string;
+      themeStatusWorking: string;
+      themeStatusUnread: string;
+      themeLink: string;
+      themeConfig: string;
+    }
+    const themes: Record<string, ThemeColors> = {
+      '极光绿-light': {
+        themeAccent: '#07C160', themeBgPrimary: '#F5F5F5', themeBgSecondary: '#EDEDED',
+        themeBgCard: '#FFFFFF', themeTextPrimary: '#333333', themeTextSecondary: '#888888',
+        themeTextTertiary: '#999999', themeTextMuted: '#BBBBBB', themeBorderPrimary: '#E0E0E0',
+        themeBorderSecondary: '#F0F0F0', themeDivider: '#EEEEEE', themeChatUserBg: '#95EC69',
+        themeStatusWorking: '#2196F3', themeStatusUnread: '#FF3B30', themeLink: '#07C160',
+        themeConfig: '#07C160'
+      },
+      '极光绿-dark': {
+        themeAccent: '#4ADE80', themeBgPrimary: '#0F1F15', themeBgSecondary: '#162B20',
+        themeBgCard: '#1E3A2A', themeTextPrimary: '#E8F5EC', themeTextSecondary: '#A8D5B8',
+        themeTextTertiary: '#7BC49A', themeTextMuted: '#5AAD7E', themeBorderPrimary: '#2A4A35',
+        themeBorderSecondary: '#1E3525', themeDivider: '#243A2C', themeChatUserBg: '#2A5A3A',
+        themeStatusWorking: '#60A5FA', themeStatusUnread: '#F87171', themeLink: '#4ADE80',
+        themeConfig: '#4ADE80'
+      },
+      '樱花粉-light': {
+        themeAccent: '#FF69B4', themeBgPrimary: '#FFF0F5', themeBgSecondary: '#FFE4EC',
+        themeBgCard: '#FFFFFF', themeTextPrimary: '#333333', themeTextSecondary: '#888888',
+        themeTextTertiary: '#999999', themeTextMuted: '#BBBBBB', themeBorderPrimary: '#E8C8D8',
+        themeBorderSecondary: '#F5E0EB', themeDivider: '#F0D0E0', themeChatUserBg: '#FFB6C1',
+        themeStatusWorking: '#2196F3', themeStatusUnread: '#FF69B4', themeLink: '#FF69B4',
+        themeConfig: '#FF69B4'
+      },
+      '樱花粉-dark': {
+        themeAccent: '#FF69B4', themeBgPrimary: '#1F1018', themeBgSecondary: '#2B1520',
+        themeBgCard: '#3A1E2A', themeTextPrimary: '#F5E8EE', themeTextSecondary: '#D8A8C0',
+        themeTextTertiary: '#C088A0', themeTextMuted: '#A86888', themeBorderPrimary: '#4A2535',
+        themeBorderSecondary: '#351825', themeDivider: '#3C1E2C', themeChatUserBg: '#4A2535',
+        themeStatusWorking: '#60A5FA', themeStatusUnread: '#F87171', themeLink: '#FF69B4',
+        themeConfig: '#FF69B4'
+      },
+      '天空蓝-light': {
+        themeAccent: '#1E90FF', themeBgPrimary: '#F0F8FF', themeBgSecondary: '#E6F3FF',
+        themeBgCard: '#FFFFFF', themeTextPrimary: '#333333', themeTextSecondary: '#888888',
+        themeTextTertiary: '#999999', themeTextMuted: '#BBBBBB', themeBorderPrimary: '#CCE4FF',
+        themeBorderSecondary: '#E0EDFF', themeDivider: '#D0E8FF', themeChatUserBg: '#87CEEB',
+        themeStatusWorking: '#2196F3', themeStatusUnread: '#FF6B6B', themeLink: '#1E90FF',
+        themeConfig: '#1E90FF'
+      },
+      '天空蓝-dark': {
+        themeAccent: '#60A5FA', themeBgPrimary: '#0F1825', themeBgSecondary: '#152035',
+        themeBgCard: '#1E2A40', themeTextPrimary: '#E8F0FA', themeTextSecondary: '#A8C4E8',
+        themeTextTertiary: '#7AACDC', themeTextMuted: '#5A94C8', themeBorderPrimary: '#2A3850',
+        themeBorderSecondary: '#1E2835', themeDivider: '#243040', themeChatUserBg: '#2A3850',
+        themeStatusWorking: '#93C5FD', themeStatusUnread: '#F87171', themeLink: '#60A5FA',
+        themeConfig: '#60A5FA'
+      },
+      '日落橙-light': {
+        themeAccent: '#FF8C00', themeBgPrimary: '#FFF8F0', themeBgSecondary: '#FFF0E0',
+        themeBgCard: '#FFFFFF', themeTextPrimary: '#333333', themeTextSecondary: '#888888',
+        themeTextTertiary: '#999999', themeTextMuted: '#BBBBBB', themeBorderPrimary: '#FFE0B0',
+        themeBorderSecondary: '#FFF0D0', themeDivider: '#FFE8C0', themeChatUserBg: '#FFDAB9',
+        themeStatusWorking: '#2196F3', themeStatusUnread: '#FF6B6B', themeLink: '#FF8C00',
+        themeConfig: '#FF8C00'
+      },
+      '日落橙-dark': {
+        themeAccent: '#FFB347', themeBgPrimary: '#1F1510', themeBgSecondary: '#2B1E15',
+        themeBgCard: '#3A2A1E', themeTextPrimary: '#FAF0E8', themeTextSecondary: '#E8C8A8',
+        themeTextTertiary: '#DCAC80', themeTextMuted: '#C89060', themeBorderPrimary: '#4A3525',
+        themeBorderSecondary: '#352015', themeDivider: '#3C2018', themeChatUserBg: '#4A3525',
+        themeStatusWorking: '#60A5FA', themeStatusUnread: '#F87171', themeLink: '#FFB347',
+        themeConfig: '#FFB347'
+      },
+      '薰衣草-light': {
+        themeAccent: '#9B59B6', themeBgPrimary: '#F8F4FF', themeBgSecondary: '#EDE4F7',
+        themeBgCard: '#FFFFFF', themeTextPrimary: '#333333', themeTextSecondary: '#888888',
+        themeTextTertiary: '#999999', themeTextMuted: '#BBBBBB', themeBorderPrimary: '#D8C4E8',
+        themeBorderSecondary: '#E8DCF4', themeDivider: '#DDD0EC', themeChatUserBg: '#C9A0DC',
+        themeStatusWorking: '#2196F3', themeStatusUnread: '#FF6B6B', themeLink: '#9B59B6',
+        themeConfig: '#9B59B6'
+      },
+      '薰衣草-dark': {
+        themeAccent: '#C084FC', themeBgPrimary: '#1A1520', themeBgSecondary: '#251B2B',
+        themeBgCard: '#30253A', themeTextPrimary: '#F0E8F8', themeTextSecondary: '#C8A8E0',
+        themeTextTertiary: '#AC88D0', themeTextMuted: '#9068B8', themeBorderPrimary: '#3E2E4A',
+        themeBorderSecondary: '#2B1E35', themeDivider: '#342438', themeChatUserBg: '#3E2E4A',
+        themeStatusWorking: '#60A5FA', themeStatusUnread: '#F87171', themeLink: '#C084FC',
+        themeConfig: '#C084FC'
+      }
+    };
+    const dm = darkMode ?? this.getDarkMode();
+    const key = `${name}-${dm ? 'dark' : 'light'}`;
+    const theme = themes[key] || themes[`${name}-light`] || themes['极光绿-light'];
+    AppStorage.setOrCreate<string>('themeAccent', theme.themeAccent);
+    AppStorage.setOrCreate<string>('themeBgPrimary', theme.themeBgPrimary);
+    AppStorage.setOrCreate<string>('themeBgSecondary', theme.themeBgSecondary);
+    AppStorage.setOrCreate<string>('themeBgCard', theme.themeBgCard);
+    AppStorage.setOrCreate<string>('themeTextPrimary', theme.themeTextPrimary);
+    AppStorage.setOrCreate<string>('themeTextSecondary', theme.themeTextSecondary);
+    AppStorage.setOrCreate<string>('themeTextTertiary', theme.themeTextTertiary);
+    AppStorage.setOrCreate<string>('themeTextMuted', theme.themeTextMuted);
+    AppStorage.setOrCreate<string>('themeBorderPrimary', theme.themeBorderPrimary);
+    AppStorage.setOrCreate<string>('themeBorderSecondary', theme.themeBorderSecondary);
+    AppStorage.setOrCreate<string>('themeDivider', theme.themeDivider);
+    AppStorage.setOrCreate<string>('themeChatUserBg', theme.themeChatUserBg);
+    AppStorage.setOrCreate<string>('themeStatusWorking', theme.themeStatusWorking);
+    AppStorage.setOrCreate<string>('themeStatusUnread', theme.themeStatusUnread);
+    AppStorage.setOrCreate<string>('themeLink', theme.themeLink);
+    AppStorage.setOrCreate<string>('themeConfig', theme.themeConfig);
+    AppStorage.setOrCreate<boolean>('isDarkMode', dm);
+  }
+
+  public getProjects(): OpenCodeProject[] {
+    return this.projects;
+  }
+
+  public async addProject(name: string, url: string, username: string, authToken: string, path: string, notes: string = '', backendId: string = ''): Promise<string> {
+    const newProject: OpenCodeProject = {
+      id: Date.now().toString(),
+      name: name,
+      url: url,
+      username: username,
+      authToken: authToken,
+      path: path,
+      notes: notes,
+      backendId: backendId,
+      lastAccess: Date.now(),
+      isWorking: false,
+      unreadCount: 0
+    };
+    this.projects.push(newProject);
+    await this.saveProjects();
+    this.notifySessionsChanged();
+    return newProject.id;
+  }
+
+  public addProjectWithBackend(name: string, backendUrl: string, backendUsername: string, backendAuthToken: string, path: string, notes: string = ''): void {
+    const backend = this.backends.find(b => b.url === backendUrl);
+    this.addProject(name, backendUrl, backendUsername, backendAuthToken, path, notes, backend?.id ?? '');
+  }
+
+  public getProjectById(id: string): OpenCodeProject | undefined {
+    const project = this.projects.find(p => p.id === id);
+    console.info('[OpenCodeCore] getProjectById:', id, 'found:', project ? project.preferredModel : 'undefined');
+    return project;
+  }
+
+  public updateProject(id: string, name: string, url: string, username: string, authToken: string, path: string, notes: string = '', backendId: string = '', preferredModel?: string): void {
+    console.info('[OpenCodeCore] >>> updateProject called, id:', id);
+    console.info('[OpenCodeCore]   preferredModel param:', JSON.stringify(preferredModel));
+    const index = this.projects.findIndex(p => p.id === id);
+    if (index !== -1) {
+      const backend = this.backends.find(b => b.url === url);
+      this.projects[index] = {
+        ...this.projects[index],
+        name,
+        url,
+        username,
+        authToken,
+        path,
+        notes,
+        backendId: backendId || (backend?.id ?? this.projects[index].backendId),
+        preferredModel: preferredModel !== undefined ? preferredModel : this.projects[index].preferredModel,
+        lastAccess: Date.now()
+      };
+      console.info('[OpenCodeCore]   saved preferredModel:', JSON.stringify(this.projects[index].preferredModel));
+      this.saveProjects();
+    }
+  }
+
+  public removeProject(id: string): void {
+    this.projects = this.projects.filter(p => p.id !== id);
+    this.saveProjects();
+    this.notifySessionsChanged();
+  }
+
+  // 进入会话时：仅清除未读数，不清 isWorking
+  // hasPendingWork 由 isWorking || unreadCount 派生
+  // - isWorking 由 SSE status 事件或 HTTP 请求状态驱动，进入会话时保留蓝点（后端可能仍在工作）
+  // - unreadCount 由其他会话的新消息触发，进入即视为已读，清零
+  public setCurrentProject(id: string): void {
+    this.currentProjectId = id;
+    const project = this.projects.find(p => p.id === id);
+    if (project) {
+      project.lastAccess = Date.now();
+      if (project.unreadCount > 0) {
+        project.unreadCount = 0;
+        this.saveProjects();
+        this.notifySessionsChanged();
+      }
+      this.apiClient.updateConfig(project.url, project.username, project.authToken, project.path);
+    }
+  }
+
+  public getCurrentProject(): OpenCodeProject | undefined {
+    return this.projects.find(p => p.id === this.currentProjectId);
+  }
+
+  public getDraft(projectId: string): string {
+    const project = this.projects.find(p => p.id === projectId);
+    return project?.draft ?? '';
+  }
+
+  public saveDraft(projectId: string, draft: string): void {
+    const index = this.projects.findIndex(p => p.id === projectId);
+    if (index !== -1) {
+      this.projects[index].draft = draft;
+      this.saveProjects();
+    }
+  }
+
+  public clearDraft(projectId: string): void {
+    this.saveDraft(projectId, '');
+  }
+
+  public setCurrentSession(sessionId: string): void {
+    this.currentSessionId = sessionId;
+  }
+
+  public getCurrentSessionId(): string {
+    return this.currentSessionId;
+  }
+
+  public markCurrentProjectLeft(): void {
+    this.leftCurrentProject = true;
+  }
+
+  public clearLeftFlag(): void {
+    this.leftCurrentProject = false;
+  }
+
+  public getBackendUrl(): string {
+    const project = this.getCurrentProject();
+    return project ? project.url : '';
+  }
+
+  public async storeBackendUrl(url: string): Promise<void> {
+    console.info(`[OpenCodeCore] Backend URL updated from JS: ${url}`);
+    if (this.projects.length === 0) {
+      await this.addProject('Default Project', url, '', '', '/', '', '');
+    }
+  }
+
+  public async sendCommand(command: string): Promise<{ status: string; timestamp: number; message?: string }> {
+    const project = this.getCurrentProject();
+    if (!project) {
+      throw new Error('No project selected');
+    }
+    const sessionId = this.getCurrentSessionId();
+    if (!sessionId) {
+      throw new Error('No session selected');
+    }
+    console.info(`[OpenCodeCore] Executing: ${command} on ${project.url}`);
+    const result = await this.apiClient.sendPrompt(sessionId, [{ type: 'text', text: command }]);
+    if (result) {
+      const textParts = result.parts.filter(p => p.type === 'text').map(p => p.text).join('\n');
+      return { status: 'success', timestamp: Date.now(), message: textParts || 'Command executed' };
+    }
+    return { status: 'error', timestamp: Date.now(), message: 'Failed to execute command' };
+  }
+
+  public getInjectedScripts(): string {
+    return `console.log("OpenCode Mobile Native Bridge Active");`;
+  }
+
+  public getBackends(): OpenCodeBackend[] {
+    return this.backends;
+  }
+
+  public async addBackend(url: string, username: string, authToken: string, notes: string, source?: string): Promise<void> {
+    const exists = this.backends.some(b => b.url === url);
+    if (exists) return;
+    this.backends.push({
+      id: Date.now().toString(),
+      url,
+      username,
+      authToken,
+      notes,
+      source: source,
+    });
+    await this.saveBackends();
+  }
+
+  public async removeBackend(id: string): Promise<void> {
+    this.backends = this.backends.filter(b => b.id !== id);
+    await this.saveBackends();
+  }
+
+  public async updateBackend(id: string, url: string, username: string, authToken: string, notes: string): Promise<void> {
+    const index = this.backends.findIndex(b => b.id === id);
+    if (index !== -1) {
+      this.backends[index] = { ...this.backends[index], url, username, authToken, notes };
+      await this.saveBackends();
+    }
+  }
+
+  public getBackendById(id: string): OpenCodeBackend | undefined {
+    return this.backends.find(b => b.id === id);
+  }
+
+  public getSessions(): ChatSession[] {
+    return this.projects.map(p => ({
+      id: p.id,
+      name: p.name,
+      backendUrl: p.url,
+      backendId: p.backendId,
+      directory: p.path,
+      remoteSessionId: p.remoteSessionId,
+      updatedAt: new Date(p.lastAccess).toLocaleString(),
+          updatedAtTimestamp: p.lastAccess
+    }));
+  }
+
+  public async updateRemoteSessionId(projectId: string, remoteId: string): Promise<void> {
+    const project = this.projects.find(p => p.id === projectId);
+    if (project) {
+      project.remoteSessionId = remoteId;
+      await this.saveProjects();
+    }
+  }
+
+  public async updateSession(id: string, name: string, backendUrl: string, directory: string): Promise<void> {
+    const project = this.projects.find(p => p.id === id);
+    const username = project?.username ?? '';
+    this.updateProject(id, name, backendUrl, username, '', directory, '');
+  }
+
+  public async removeSession(id: string): Promise<void> {
+    this.removeProject(id);
+  }
+
+  public async refreshSessionsFromBackend(backendUrl: string, username: string, authToken: string, directory: string): Promise<OpenCodeSession[]> {
+    console.info('[OpenCodeCore] refreshSessionsFromBackend:', backendUrl, authToken ? 'with token' : 'no token', directory);
+    this.apiClient.updateConfig(backendUrl, username, authToken, directory);
+    const sessions = await this.apiClient.listSessions();
+    console.info('[OpenCodeCore] listSessions result:', sessions.length);
+    return sessions;
+  }
+
+  public async createBackendSession(backendUrl: string, username: string, authToken: string, directory: string, title?: string, preferredModel?: string): Promise<OpenCodeSession | null> {
+    this.apiClient.updateConfig(backendUrl, username, authToken, directory);
+    return await this.apiClient.createSession(title, undefined, preferredModel);
+  }
+
+  public async deleteBackendSession(sessionId: string): Promise<boolean> {
+    return await this.apiClient.deleteSession(sessionId);
+  }
+
+  public async getBackendMessages(sessionId: string): Promise<OpenCodeMessage[]> {
+    return await this.apiClient.getMessages(sessionId);
+  }
+
+  public async cacheMessages(sessionId: string, messages: OpenCodeMessage[]): Promise<void> {
+    if (!this.preferences) return;
+    try {
+      const allJson = await this.preferences.get(OpenCodeCore.KEY_MESSAGES, '{}') as string;
+      const all: Record<string, OpenCodeMessage[]> = JSON.parse(allJson);
+      all[sessionId] = messages;
+      await this.preferences.put(OpenCodeCore.KEY_MESSAGES, JSON.stringify(all));
+      await this.preferences.flush();
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to cache messages:', err);
+    }
+  }
+
+  public async getCachedMessages(sessionId: string): Promise<OpenCodeMessage[]> {
+    if (!this.preferences) return [];
+    try {
+      const allJson = await this.preferences.get(OpenCodeCore.KEY_MESSAGES, '{}') as string;
+      const all: Record<string, OpenCodeMessage[]> = JSON.parse(allJson);
+      return all[sessionId] || [];
+    } catch (err) {
+      console.error('[OpenCodeCore] Failed to load cached messages:', err);
+      return [];
+    }
+  }
+
+  public async sendBackendPrompt(sessionId: string, text: string, model?: string): Promise<OpenCodeMessage | null> {
+    return await this.apiClient.sendPrompt(sessionId, [{ type: 'text', text }], model);
+  }
+
+  public async abortBackendSession(sessionId: string): Promise<boolean> {
+    return await this.apiClient.abortSession(sessionId);
+  }
+
+  public sendMessagePersistent(
+    projectId: string,
+    sessionId: string,
+    loadingId: string,
+    text: string,
+    model: string | undefined,
+    callback: MessageCallback
+  ): void {
+    const project = this.projects.find(p => p.id === projectId);
+    if (!project) {
+      callback({ response: null, error: '项目不存在', loadingId });
+      return;
+    }
+
+    this.cancelPendingRequest();
+    this.pendingMessage = { projectId, sessionId, loadingId, text, model, isLoading: true };
+    this.messageCallback = callback;
+    // 发送请求时：标记为工作中（SSE 调试完成后可改为设置 hasPendingWork）
+    this.setProjectWorking(projectId, true);
+
+    const url = `${project.url.replace(/\/+$/, '')}/session/${encodeURIComponent(sessionId)}/message`;
+    const headers = this.getHeaders(project.url, project.username, project.authToken, project.path);
+
+    let modelRef: { providerID: string; modelID: string } | undefined;
+    if (model && model.includes('/')) {
+      const parts = model.split('/');
+      modelRef = { providerID: parts[0], modelID: parts[1] };
+    }
+
+    const body = { parts: [{ type: 'text', text }], model: modelRef };
+
+    this.pendingRequest = http.createHttp();
+    console.info('[OpenCodeCore] sendMessagePersistent, URL:', url, 'body:', JSON.stringify(body));
+
+    this.pendingRequest.request(
+      url,
+      {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: JSON.stringify(body),
+        connectTimeout: 60000,
+        readTimeout: 0,
+      },
+      (err, data) => {
+        console.info('[OpenCodeCore] HTTP callback, err:', JSON.stringify(err), 'responseCode:', data?.responseCode);
+        const pending = this.pendingMessage;
+        this.pendingRequest = null;
+        this.pendingMessage = null;
+
+        if (!pending || !this.messageCallback) return;
+
+        if (err) {
+          const errObj = err as { code?: number; message?: string };
+          if (errObj?.code === 2300023 || errObj?.code === 2300028) {
+            this.messageCallback = null;
+            return;
+          }
+          this.messageCallback({ response: null, error: errObj?.message || String(err), loadingId: pending.loadingId });
+          this.messageCallback = null;
+          this.setProjectWorking(projectId, false);
+          return;
+        }
+
+        if (data?.responseCode === 200) {
+          try {
+            const response = JSON.parse(data.result as string) as OpenCodeMessage;
+            this.messageCallback?.({ response, error: null, loadingId: pending.loadingId });
+          } catch {
+            this.messageCallback?.({ response: null, error: '解析响应失败', loadingId: pending.loadingId });
+          }
+        } else if (data?.responseCode === 429) {
+          try {
+            const body = JSON.parse(data.result as string);
+            const msg = body?.error?.message || body?.message || '请求频率超限';
+            this.messageCallback?.({ response: null, error: msg, loadingId: pending.loadingId });
+          } catch {
+            this.messageCallback?.({ response: null, error: '请求频率超限', loadingId: pending.loadingId });
+          }
+        } else {
+          this.messageCallback?.({ response: null, error: `请求失败: HTTP ${data?.responseCode}`, loadingId: pending.loadingId });
+        }
+        this.messageCallback = null;
+
+        const wasLeft = this.leftCurrentProject;
+        this.leftCurrentProject = false;
+        this.setProjectWorking(projectId, false);
+
+        if (wasLeft) {
+          const proj = this.projects.find(p => p.id === projectId);
+          if (proj) {
+            proj.unreadCount++;
+            this.saveProjects();
+            this.notifySessionsChanged();
+          }
+        }
+      }
+    );
+  }
+
+  public cancelPendingRequest(): void {
+    if (this.pendingRequest) {
+      this.pendingRequest.destroy();
+      this.pendingRequest = null;
+    }
+    const projectId = this.pendingMessage?.projectId;
+    if (this.pendingMessage) {
+      console.info('[OpenCodeCore] cancelPendingRequest, sessionId:', this.pendingMessage.sessionId);
+      const sid = this.pendingMessage.sessionId;
+      const project = this.projects.find(p => p.id === this.pendingMessage!.projectId);
+      if (project) {
+        const abortUrl = `${project.url.replace(/\/+$/, '')}/session/${encodeURIComponent(sid)}/abort`;
+        http.createHttp().request(abortUrl, {
+          method: http.RequestMethod.POST,
+          header: this.getHeaders(project.url, project.username, project.authToken, project.path),
+          connectTimeout: 5000,
+          readTimeout: 5000,
+        }).catch(() => {});
+      }
+    }
+    this.pendingMessage = null;
+    this.messageCallback = null;
+    if (projectId) {
+      this.setProjectWorking(projectId, false);
+    }
+  }
+
+  public clearPendingState(): void {
+    if (this.pendingRequest) {
+      this.pendingRequest.destroy();
+      this.pendingRequest = null;
+    }
+    this.pendingMessage = null;
+    this.messageCallback = null;
+  }
+
+  public getPendingMessage(): PendingMessage | null {
+    return this.pendingMessage;
+  }
+
+  public isPendingForSession(sessionId: string): boolean {
+    return this.pendingMessage?.sessionId === sessionId && this.pendingMessage.isLoading;
+  }
+
+  public setSseEventCallback(callback: SseEventCallback): void {
+    this.sseEventCallback = callback;
+  }
+
+  public setStreamMessageCallback(callback: StreamMessageCallback | null): void {
+    this.streamMessageCallback = callback;
+  }
+
+  public startSse(projectId: string): void {
+    if (!OpenCodeCore.SSE_ENABLED) {
+      console.info('[OpenCodeCore] startSse: SSE is disabled by configuration');
+      return;
+    }
+
+    const project = this.projects.find(p => p.id === projectId);
+    if (!project) {
+      console.warn('[OpenCodeCore] startSse: project not found:', projectId);
+      return;
+    }
+    this.stopSse();
+
+    const url = `${project.url.replace(/\/+$/, '')}/event`;
+    const headers: Record<string, string> = {
+      'Accept': 'text/event-stream',
+      'x-opencode-directory': encodeURIComponent(project.path || '/'),
+    };
+    if (project.authToken) {
+      headers['Authorization'] = 'Basic ' + this.base64Encode((project.username || 'opencode') + ':' + project.authToken);
+    }
+
+    const req = http.createHttp();
+    console.info('[OpenCodeCore] startSse: connecting to', url);
+
+    req.on('dataReceive', (data: ArrayBuffer) => {
+      try {
+        const decoder = util.TextDecoder.create('utf-8');
+        const chunk = decoder.decodeToString(new Uint8Array(data));
+        this.handleSseChunk(chunk);
+      } catch (e) {
+        console.warn('[OpenCodeCore][SSE] decode error:', e);
+      }
+    });
+
+    req.on('dataEnd', () => {
+      console.info('[OpenCodeCore][SSE] stream ended, reconnecting in 3s...');
+      this.sseRequest = null;
+      this.sseBuffer = '';
+      setTimeout(() => {
+        const proj = this.projects.find(p => p.id === projectId);
+        if (proj && proj.id === projectId) {
+          this.startSse(projectId);
+        }
+      }, 3000);
+    });
+
+    req.requestInStream(
+      url,
+      {
+        method: http.RequestMethod.GET,
+        header: headers,
+        connectTimeout: 60000,
+        readTimeout: 0,
+      },
+      (err: Error, responseCode: number) => {
+        if (err) {
+          console.warn('[OpenCodeCore][SSE] requestInStream error:', JSON.stringify(err));
+        } else {
+          console.info('[OpenCodeCore][SSE] connected, responseCode:', responseCode);
+        }
+      }
+    );
+    this.sseRequest = req;
+  }
+
+  public stopSse(): void {
+    if (this.sseRequest) {
+      this.sseRequest.off('dataReceive');
+      this.sseRequest.off('dataEnd');
+      this.sseRequest.destroy();
+      this.sseRequest = null;
+    }
+    this.sseBuffer = '';
+  }
+
+  private handleSseChunk(chunk: string): void {
+    this.sseBuffer += chunk;
+
+    while (true) {
+      const eventEnd = this.sseBuffer.indexOf('\n\n');
+      if (eventEnd === -1) {
+        break;
+      }
+
+      const rawEvent = this.sseBuffer.slice(0, eventEnd);
+      this.sseBuffer = this.sseBuffer.slice(eventEnd + 2);
+
+      const lines = rawEvent.split('\n');
+      let jsonData = '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          jsonData = line.slice(6).trim();
+          break;
+        }
+      }
+
+      if (!jsonData) {
+        continue;
+      }
+
+      try {
+        const event = JSON.parse(jsonData) as SseEvent;
+        console.info('[OpenCodeCore][SSE] event:', event.type, 'sessionId:', (event.properties as Record<string, Object>)?.['sessionID']);
+        this.dispatchSseEvent(event);
+      } catch (e) {
+        console.warn('[OpenCodeCore][SSE] JSON parse error:', e, 'raw:', jsonData.substring(0, 200));
+      }
+    }
+  }
+
+  private dispatchSseEvent(event: SseEvent): void {
+    const props = event.properties as Record<string, Object>;
+    const sessionID = props?.['sessionID'] as string | undefined;
+    const project = sessionID ? this.projects.find(p => p.remoteSessionId === sessionID) : null;
+
+    switch (event.type) {
+      case 'server.connected':
+        console.info('[OpenCodeCore][SSE] server connected');
+        break;
+
+      case 'server.heartbeat':
+        console.debug('[OpenCodeCore][SSE] heartbeat');
+        break;
+
+      case 'session.status':
+        if (project) {
+          const status = (props?.['status'] as Record<string, Object>) || {};
+          const statusType = status?.['type'] as string;
+          const isWorking = statusType === 'busy' || statusType === 'retry';
+          if (project.isWorking !== isWorking) {
+            project.isWorking = isWorking;
+            this.saveProjects();
+            this.notifySessionsChanged();
+          }
+        }
+        break;
+
+      case 'session.idle':
+        if (project) {
+          project.isWorking = false;
+          this.saveProjects();
+          this.notifySessionsChanged();
+        }
+        this.streamMessageCallback?.({
+          sessionID: sessionID || '',
+          messageID: '',
+          delta: '',
+          isComplete: true,
+        });
+        break;
+
+      case 'session.compacted':
+        console.info('[OpenCodeCore][SSE] session compacted:', sessionID);
+        break;
+
+      case 'message.updated':
+        console.info('[OpenCodeCore][SSE] message updated:', sessionID);
+        this.streamMessageCallback?.({
+          sessionID: sessionID || '',
+          messageID: (props?.['info'] as Record<string, Object>)?.['id'] as string || '',
+          delta: '',
+          isComplete: false,
+          message: props?.['info'] as unknown as OpenCodeMessage,
+        });
+        break;
+
+      case 'message.part.updated':
+        console.debug('[OpenCodeCore][SSE] message part updated:', sessionID);
+        break;
+
+      case 'message.part.delta':
+        console.debug('[OpenCodeCore][SSE] message part delta:', sessionID);
+        const part = (props as Record<string, Object>)?.['part'] as Record<string, Object>;
+        const delta = part?.['text'] as string | undefined;
+        if (delta) {
+          this.streamMessageCallback?.({
+            sessionID: sessionID || '',
+            messageID: (props as Record<string, Object>)?.['messageID'] as string || '',
+            delta: delta,
+            isComplete: false,
+          });
+        }
+        break;
+
+      case 'text.delta':
+        console.debug('[OpenCodeCore][SSE] text delta:', sessionID);
+        this.streamMessageCallback?.({
+          sessionID: sessionID || '',
+          messageID: (props as Record<string, Object>)?.['messageID'] as string || '',
+          delta: (props as Record<string, Object>)?.['delta'] as string || '',
+          isComplete: false,
+        });
+        break;
+
+      case 'permission.updated':
+        console.info('[OpenCodeCore][SSE] permission requested:', (props as Record<string, Object>)?.['type']);
+        break;
+
+      case 'permission.replied':
+        console.info('[OpenCodeCore][SSE] permission replied');
+        break;
+
+      default:
+        console.debug('[OpenCodeCore][SSE] unhandled event type:', event.type);
+        break;
+    }
+
+    this.sseEventCallback?.(event);
+  }
+
+  public async replyPermission(sessionId: string, requestID: string, response: 'once' | 'always' | 'reject'): Promise<boolean> {
+    const project = this.projects.find(p => p.id === this.currentProjectId);
+    if (!project) {
+      console.warn('[OpenCodeCore] replyPermission: project not found:', this.currentProjectId);
+      return false;
+    }
+
+    const url = `${project.url.replace(/\/+$/, '')}/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(requestID)}`;
+    try {
+      const result = await new Promise<http.HttpResponse>((resolve, reject) => {
+        http.createHttp().request(
+          url,
+          {
+            method: http.RequestMethod.POST,
+          header: this.getHeaders(project.url, project.username, project.authToken, project.path),
+            extraData: JSON.stringify({ response }),
+            connectTimeout: 10000,
+            readTimeout: 10000,
+          },
+          (err, data) => {
+            if (err) reject(err);
+            else resolve(data);
+          }
+        );
+      });
+      console.info('[OpenCodeCore] replyPermission:', response, 'result:', result.responseCode);
+      return result.responseCode === 200 || result.responseCode === 204;
+    } catch (e) {
+      console.error('[OpenCodeCore] replyPermission error:', e);
+      return false;
+    }
+  }
+
+  // 设置/取消工作中状态（由 SSE status 事件驱动，或由本地发送请求触发）
+  private async setProjectWorking(projectId: string, working: boolean): Promise<void> {
+    const project = this.projects.find(p => p.id === projectId);
+    if (project) {
+      project.isWorking = working;
+      console.info(`[setProjectWorking] project=${projectId} isWorking=${working}`);
+      await this.saveProjects();
+      this.notifySessionsChanged();
+    }
+  }
+
+  public isProjectWorking(projectId: string): boolean {
+    const project = this.projects.find(p => p.id === projectId);
+    return project?.isWorking ?? false;
+  }
+
+  private getHeaders(backendUrl: string, username: string, authToken: string, directory: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-opencode-directory': encodeURIComponent(directory || '/'),
+    };
+    if (authToken) {
+      headers['Authorization'] = 'Basic ' + this.base64Encode((username || 'opencode') + ':' + authToken);
+    }
+    return headers;
+  }
+
+  private base64Encode(str: string): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let result = '';
+    let i = 0;
+    const len = str.length;
+    while (i < len) {
+      const b1 = str.charCodeAt(i);
+      i++;
+      const b2 = i < len ? str.charCodeAt(i) : NaN;
+      i++;
+      const b3 = i < len ? str.charCodeAt(i) : NaN;
+      i++;
+      result += chars.charAt(b1 >> 2);
+      result += chars.charAt(((b1 & 3) << 4) | (isNaN(b2) ? 0 : (b2 >> 4)));
+      result += isNaN(b2) ? '=' : chars.charAt(((b2 & 15) << 2) | (isNaN(b3) ? 0 : (b3 >> 6)));
+      result += isNaN(b3) ? '=' : chars.charAt(b3 & 63);
+    }
+    return result;
+  }
+
+  public async saveCurrentConfigToServer(): Promise<{ success: boolean; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, error: '未配置账户服务器或未登录' };
+    }
+
+    const syncBackends: SyncBackend[] = this.backends.map(b => ({
+      id: b.id,
+      backend_url: b.url,
+      username: b.username || null,
+      auth_token: b.authToken || null,
+      remark: b.notes || null,
+    }));
+
+    const syncSessions: SyncSession[] = this.projects.map(p => ({
+      id: p.id,
+      title: p.name,
+      backend_url: p.url,
+      backend_id: p.backendId,
+      directory: p.path,
+      remote_session_id: p.remoteSessionId || null,
+      preferred_model: p.preferredModel || null,
+      last_access: new Date(p.lastAccess).toISOString(),
+    }));
+
+    const body: SyncRequest = { backends: syncBackends, sessions: syncSessions };
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/sync`;
+
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.PUT,
+          header: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + accountToken,
+          },
+          extraData: JSON.stringify(body),
+          connectTimeout: 15000,
+          readTimeout: 15000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            resolve({ success: true });
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, error: '未授权，请重新登录' });
+            this.clearAccount();
+          } else {
+            resolve({ success: false, error: `保存失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async syncConfigFromServer(): Promise<{ success: boolean; backends: number; sessions: number; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, backends: 0, sessions: 0, error: '未配置账户服务器或未登录' };
+    }
+
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/sync`;
+
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.GET,
+          header: {
+            'Authorization': 'Bearer ' + accountToken,
+          },
+          connectTimeout: 15000,
+          readTimeout: 15000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, backends: 0, sessions: 0, error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            try {
+              console.info('[syncConfigFromServer] raw result:', data.result as string);
+              const resp = JSON.parse(data.result as string) as SyncResponse;
+              console.info('[syncConfigFromServer] parsed backends:', resp.backends.length, 'sessions:', resp.sessions.length);
+
+              let addedBackends = 0;
+              for (const b of resp.backends) {
+                const existing = this.backends.find(x => x.url === b.backend_url);
+                if (!existing) {
+                  this.backends.push({
+                    id: b.id,
+                    url: b.backend_url,
+                    username: b.username || '',
+                    authToken: b.auth_token || '',
+                    notes: b.remark || '',
+                  });
+                  addedBackends++;
+                }
+              }
+              this.saveBackends();
+
+              let addedSessions = 0;
+              for (const s of resp.sessions) {
+                const existing = this.projects.find(p => p.id === s.id);
+                if (!existing) {
+                  this.projects.push({
+                    id: s.id,
+                    name: s.title || '未命名会话',
+                    url: s.backend_url || '',
+                    username: '',
+                    authToken: '',
+                    path: s.directory || '/',
+                    notes: '',
+                    backendId: s.backend_id || '',
+                    remoteSessionId: s.remote_session_id || undefined,
+                    preferredModel: s.preferred_model || undefined,
+                    lastAccess: s.last_access ? new Date(s.last_access).getTime() : Date.now(),
+                    isWorking: false,
+                    unreadCount: 0,
+                  });
+                  addedSessions++;
+                }
+              }
+              this.saveProjects();
+              this.notifySessionsChanged();
+
+              resolve({ success: true, backends: addedBackends, sessions: addedSessions });
+            } catch {
+              resolve({ success: false, backends: 0, sessions: 0, error: '解析响应失败' });
+            }
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, backends: 0, sessions: 0, error: '未授权，请重新登录' });
+          } else {
+            resolve({ success: false, backends: 0, sessions: 0, error: `同步失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async listContainers(): Promise<{ success: boolean; containers: ContainerInfo[]; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, containers: [], error: '未配置账户服务器或未登录' };
+    }
+
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/containers`;
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.GET,
+          header: { 'Authorization': 'Bearer ' + accountToken },
+          connectTimeout: 10000,
+          readTimeout: 10000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, containers: [], error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            try {
+              const containers = JSON.parse(data.result as string) as ContainerInfo[];
+              resolve({ success: true, containers });
+            } catch {
+              resolve({ success: false, containers: [], error: '解析响应失败' });
+            }
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, containers: [], error: '未授权，请重新登录' });
+          } else {
+            resolve({ success: false, containers: [], error: `查询失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async createContainer(name: string): Promise<{ success: boolean; container: ContainerInfo | null; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, container: null, error: '未配置账户服务器或未登录' };
+    }
+
+    interface CreateBody {
+      name: string;
+    }
+    const body: CreateBody = { name: name };
+
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/containers`;
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.POST,
+          header: { 'Authorization': 'Bearer ' + accountToken, 'Content-Type': 'application/json' },
+          extraData: JSON.stringify(body),
+          connectTimeout: 15000,
+          readTimeout: 15000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, container: null, error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            try {
+              const container = JSON.parse(data.result as string) as ContainerInfo;
+              resolve({ success: true, container });
+            } catch {
+              resolve({ success: false, container: null, error: '解析响应失败' });
+            }
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, container: null, error: '未授权，请重新登录' });
+          } else if (data.responseCode === 403) {
+            try {
+              const errBody = JSON.parse(data.result as string) as { detail?: string };
+              resolve({ success: false, container: null, error: errBody.detail || '权限不足' });
+            } catch {
+              resolve({ success: false, container: null, error: '权限不足' });
+            }
+          } else {
+            resolve({ success: false, container: null, error: `创建失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async startContainer(containerId: string): Promise<{ success: boolean; container: ContainerInfo | null; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, container: null, error: '未配置账户服务器或未登录' };
+    }
+
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/containers/${containerId}/start`;
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.POST,
+          header: { 'Authorization': 'Bearer ' + accountToken },
+          connectTimeout: 60000,
+          readTimeout: 60000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, container: null, error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            try {
+              const container = JSON.parse(data.result as string) as ContainerInfo;
+              resolve({ success: true, container });
+            } catch {
+              resolve({ success: false, container: null, error: '解析响应失败' });
+            }
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, container: null, error: '未授权，请重新登录' });
+          } else {
+            resolve({ success: false, container: null, error: `启动失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async stopContainer(containerId: string): Promise<{ success: boolean; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, error: '未配置账户服务器或未登录' };
+    }
+
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/containers/${containerId}/stop`;
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.POST,
+          header: { 'Authorization': 'Bearer ' + accountToken },
+          connectTimeout: 30000,
+          readTimeout: 30000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            resolve({ success: true });
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, error: '未授权，请重新登录' });
+            this.clearAccount();
+          } else {
+            resolve({ success: false, error: `停止失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async deleteContainer(containerId: string): Promise<{ success: boolean; error?: string }> {
+    const accountUrl = this.getAccountServerUrl();
+    const accountToken = this.getAccountToken();
+    if (!accountUrl || !accountToken) {
+      return { success: false, error: '未配置账户服务器或未登录' };
+    }
+
+    const url = `${accountUrl.replace(/\/+$/, '')}/api/containers/${containerId}`;
+    return new Promise((resolve) => {
+      const req = http.createHttp();
+      req.request(
+        url,
+        {
+          method: http.RequestMethod.DELETE,
+          header: { 'Authorization': 'Bearer ' + accountToken },
+          connectTimeout: 30000,
+          readTimeout: 30000,
+        },
+        (err, data) => {
+          req.destroy();
+          if (err) {
+            resolve({ success: false, error: '网络错误: ' + String(err) });
+            return;
+          }
+          if (data.responseCode === 200) {
+            resolve({ success: true });
+          } else if (data.responseCode === 401) {
+            resolve({ success: false, error: '未授权，请重新登录' });
+            this.clearAccount();
+          } else {
+            resolve({ success: false, error: `删除失败 (${data.responseCode})` });
+          }
+        }
+      );
+    });
+  }
+
+  public async addBackendFromContainer(opencodeUrl: string, username: string, password: string, name: string): Promise<void> {
+    await this.addBackend(opencodeUrl, username, password, name, 'container');
+  }
+
+  public async syncContainersToBackends(containers: ContainerInfo[]): Promise<void> {
+    for (let i = 0; i < containers.length; i++) {
+      const c = containers[i];
+      if (c.opencode_url && c.opencode_username) {
+        await this.addBackend(c.opencode_url, c.opencode_username, c.opencode_password || '', c.name, 'container');
+      }
+    }
+  }
+
+}

@@ -1,0 +1,474 @@
+import http from '@ohos.net.http';
+import util from '@ohos.util';
+import { OpenCodeCore } from '../core/OpenCodeCore';
+import { OpenCodeMessage, OpenCodeMessagePart } from '../core/OpenCodeApiClient';
+
+export interface DisplayMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  isLoading?: boolean;
+  model?: string;
+  msgId?: string;
+}
+
+export interface MessagePage {
+  items: DisplayMessage[];
+  cursor: {
+    previous?: string;
+    next?: string;
+  };
+  rawMessages?: OpenCodeMessage[];
+}
+
+interface ToolState {
+  status?: string;
+  title?: string;
+  output?: string;
+  error?: string;
+}
+
+interface FilePart {
+  filename?: string;
+}
+
+interface TextPart {
+  type: 'text';
+  text: string;
+}
+
+interface ModelRef {
+  providerID: string;
+  modelID: string;
+}
+
+interface MessageBody {
+  parts: TextPart[];
+  model?: ModelRef;
+  agent?: string;
+}
+
+export class ChatViewModel {
+  private core: OpenCodeCore = OpenCodeCore.getInstance();
+  private currentRequest: http.HttpRequest | null = null;
+
+  private base64Encode(str: string): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let result = '';
+    let i = 0;
+    const len = str.length;
+    while (i < len) {
+      const b1 = str.charCodeAt(i);
+      i++;
+      const b2 = i < len ? str.charCodeAt(i) : NaN;
+      if (i < len) i++;
+      const b3 = i < len ? str.charCodeAt(i) : NaN;
+      if (i < len) i++;
+      result += chars.charAt(b1 >> 2);
+      result += chars.charAt(((b1 & 0x03) << 4) | (isNaN(b2) ? 0 : b2 >> 4));
+      result += isNaN(b2) ? '=' : chars.charAt(((b2 & 0x0f) << 2) | (isNaN(b3) ? 0 : b3 >> 6));
+      result += isNaN(b3) ? '=' : chars.charAt(b3 & 0x3f);
+    }
+    return result;
+  }
+
+  cancelRequest(): void {
+    if (this.currentRequest) {
+      this.currentRequest.destroy();
+      this.currentRequest = null;
+    }
+  }
+
+  getHeaders(backendUrl: string, authToken: string, directory: string, username?: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-opencode-directory': encodeURIComponent(directory)
+    };
+    if (authToken) {
+      const authUsername = username || 'opencode';
+      headers['Authorization'] = 'Basic ' + this.base64Encode(authUsername + ':' + authToken);
+    }
+    return headers;
+  }
+
+  buildUrlWithDir(baseUrl: string, path: string, directory: string): string {
+    const base = baseUrl.replace(/\/+$/, '');
+    return `${base}${path}`;
+  }
+
+  private formatPartContent(part: OpenCodeMessagePart): string {
+    switch (part.type) {
+      case 'text':
+        return part.text || '';
+      case 'tool':
+        const state = part.state as ToolState | undefined;
+        if (state?.status === 'completed') {
+          return `[Tool: ${state.title || part.tool}]\n${state.output || ''}`;
+        } else if (state?.status === 'error') {
+          return `[Tool Error: ${state.error || 'Unknown error'}]`;
+        } else if (state?.status === 'running') {
+          return `[Running: ${state.title || part.tool}...]`;
+        } else {
+          return `[Tool: ${part.tool || 'unknown'}]`;
+        }
+      case 'reasoning':
+        return `<思考>\n${part.text || ''}\n</思考>`;
+      case 'step-start':
+        return `--- Step started ---`;
+      case 'step-finish':
+        return `--- Step completed ---`;
+      case 'file':
+        return `[File: ${(part as FilePart).filename || 'unknown'}]`;
+      default:
+        return '';
+    }
+  }
+
+  formatMessage(msg: OpenCodeMessage): string {
+    const textParts = msg.parts
+      .filter(p => p.type === 'text')
+      .map(p => p.text || '')
+      .join('\n');
+
+    const otherParts = msg.parts
+      .filter(p => p.type !== 'text')
+      .map(p => this.formatPartContent(p))
+      .filter(s => s.length > 0)
+      .join('\n\n');
+
+    const parts: string[] = [];
+    if (textParts) parts.push(textParts);
+    if (otherParts) parts.push(otherParts);
+
+    if (msg.info.error) {
+      parts.push(`[Error: ${msg.info.error.name}]`);
+    }
+
+    return parts.join('\n\n');
+  }
+
+  public buildAfterCursor(msgId: string, timestamp: number): string {
+    const payload = JSON.stringify({ id: msgId, time: timestamp, order: 'asc', direction: 'next' });
+    return this.strToBase64Url(payload);
+  }
+
+  private decodeCursor(cursorStr: string): { id: string; time: number; order: string; direction: string } | null {
+    try {
+      const json = this.base64UrlToStr(cursorStr);
+      return JSON.parse(json) as { id: string; time: number; order: string; direction: string };
+    } catch {
+      return null;
+    }
+  }
+
+  public invertCursorForAfter(cursorStr: string): string {
+    const decoded = this.decodeCursor(cursorStr);
+    if (!decoded) return cursorStr;
+    const inverted = { id: decoded.id, time: decoded.time, order: 'asc', direction: 'next' };
+    return this.strToBase64Url(JSON.stringify(inverted));
+  }
+
+  private strToBase64Url(str: string): string {
+    const chars: number[] = [];
+    for (let i = 0; i < str.length; i++) {
+      chars.push(str.charCodeAt(i));
+    }
+    const input = new Uint8Array(chars);
+    const base64 = new util.Base64Helper().encodeToStringSync(input);
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  private base64UrlToStr(base64Url: string): string {
+    let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = (4 - (base64.length % 4)) % 4;
+    base64 += '='.repeat(padding);
+    const decoded = new util.Base64Helper().decodeSync(base64);
+    const decoder = util.TextDecoder.create('utf-8');
+    return decoder.decodeToString(decoded);
+  }
+
+  public toDisplayMessages(messages: OpenCodeMessage[]): DisplayMessage[] {
+    return messages.map((msg, index): DisplayMessage => {
+      let model: string | undefined;
+      if (msg.info.role === 'assistant' && msg.info.providerID && msg.info.modelID) {
+        model = `${msg.info.providerID}/${msg.info.modelID}`;
+      }
+      return {
+        id: msg.info.id || `msg-${index}`,
+        role: msg.info.role as 'user' | 'assistant',
+        content: this.formatMessage(msg),
+        timestamp: msg.info.time.created,
+        model: model,
+        msgId: msg.info.id || `msg-${index}`
+      };
+    });
+  }
+
+  async loadHistoryPage(
+    backendUrl: string,
+    authToken: string,
+    directory: string,
+    realSessionId: string,
+    cursor?: string,
+    limit: number = 20,
+    order: string = 'desc',
+    username?: string
+  ): Promise<MessagePage> {
+    if (!backendUrl) {
+      return { items: [], cursor: {} };
+    }
+
+    if (!realSessionId) {
+      console.info('[ChatViewModel] No realSessionId yet, skipping history load');
+      return { items: [], cursor: {} };
+    }
+
+    this.cancelRequest();
+    this.currentRequest = http.createHttp();
+    let url = this.buildUrlWithDir(backendUrl, `/session/${encodeURIComponent(realSessionId)}/message`, directory);
+    const params: string[] = [];
+    if (limit) params.push(`limit=${limit}`);
+    if (order) params.push(`order=${order}`);
+    if (cursor) params.push(`cursor=${encodeURIComponent(cursor)}`);
+    if (params.length > 0) {
+      url += '?' + params.join('&');
+    }
+
+    try {
+      const result = await new Promise<http.HttpResponse>((resolve, reject) => {
+        this.currentRequest!.request(
+          url,
+          {
+            method: http.RequestMethod.GET,
+            header: this.getHeaders(backendUrl, authToken, directory, username),
+            connectTimeout: 10000,
+            readTimeout: 10000,
+          },
+          (err, data) => {
+            if (err) reject(err);
+            else resolve(data);
+          }
+        );
+      });
+
+      if (result.responseCode === 200) {
+        const raw = JSON.parse(result.result as string);
+        let messages: OpenCodeMessage[] = [];
+        let cursor: { previous?: string; next?: string } = {};
+        if (Array.isArray(raw)) {
+          messages = raw as OpenCodeMessage[];
+        } else {
+          const resp = raw as {
+            items?: OpenCodeMessage[];
+            cursor?: { previous?: string; next?: string };
+          };
+          messages = resp.items || [];
+          cursor = resp.cursor || {};
+        }
+        await this.core.cacheMessages(realSessionId, messages);
+        return {
+          items: this.toDisplayMessages(messages),
+          cursor: cursor,
+          rawMessages: messages
+        };
+      } else {
+        console.info('[ChatViewModel] Non-200 response:', result.responseCode);
+        const cached = await this.core.getCachedMessages(realSessionId);
+        return {
+          items: this.toDisplayMessages(cached),
+          cursor: {},
+          rawMessages: cached
+        };
+      }
+    } catch (e) {
+      console.error('[ChatViewModel] Load history page error:', e);
+      const cached = await this.core.getCachedMessages(realSessionId);
+      console.info('[ChatViewModel] Cached messages count:', cached.length);
+      return {
+        items: this.toDisplayMessages(cached),
+        cursor: {},
+        rawMessages: cached
+      };
+    } finally {
+      this.cancelRequest();
+    }
+  }
+
+  async appendCachedMessages(sessionId: string, newMessages: OpenCodeMessage[]): Promise<void> {
+    if (!sessionId || newMessages.length === 0) return;
+    try {
+      const cached = await this.core.getCachedMessages(sessionId);
+      const merged = [...cached, ...newMessages];
+      await this.core.cacheMessages(sessionId, merged);
+    } catch (e) {
+      console.error('[ChatViewModel] Failed to append cached messages:', e);
+    }
+  }
+
+  async loadHistory(
+    backendUrl: string,
+    authToken: string,
+    directory: string,
+    realSessionId: string,
+    onResult: (messages: DisplayMessage[]) => void,
+    username?: string
+  ): Promise<void> {
+    if (!backendUrl) return;
+
+    if (!realSessionId) {
+      console.info('[ChatViewModel] No realSessionId yet, skipping history load');
+      onResult([]);
+      return;
+    }
+
+    this.cancelRequest();
+    this.currentRequest = http.createHttp();
+    const url = this.buildUrlWithDir(backendUrl, `/session/${encodeURIComponent(realSessionId)}/message`, directory);
+
+    try {
+      const result = await new Promise<http.HttpResponse>((resolve, reject) => {
+        this.currentRequest!.request(
+          url,
+          {
+            method: http.RequestMethod.GET,
+            header: this.getHeaders(backendUrl, authToken, directory, username),
+            connectTimeout: 10000,
+            readTimeout: 10000,
+          },
+          (err, data) => {
+            if (err) reject(err);
+            else resolve(data);
+          }
+        );
+      });
+
+      if (result.responseCode === 200) {
+        const messages = JSON.parse(result.result as string) as OpenCodeMessage[];
+        await this.core.cacheMessages(realSessionId, messages);
+        onResult(this.toDisplayMessages(messages));
+      } else {
+        const cached = await this.core.getCachedMessages(realSessionId);
+        onResult(this.toDisplayMessages(cached));
+      }
+    } catch (e) {
+      console.error('[ChatViewModel] Load history error:', e);
+      const cached = await this.core.getCachedMessages(realSessionId);
+      onResult(this.toDisplayMessages(cached));
+    } finally {
+      this.cancelRequest();
+    }
+  }
+
+  async sendMessage(
+    backendUrl: string,
+    authToken: string,
+    directory: string,
+    realSessionId: string,
+    sessionId: string,
+    sessionName: string,
+    text: string,
+    onUpdate: (messages: DisplayMessage[]) => void
+  ): Promise<string> {
+    const loadingId = `loading-${Date.now()}`;
+
+    let currentSessionId = realSessionId;
+
+    if (!currentSessionId) {
+      try {
+        const resp = await this.core.createBackendSession(backendUrl, authToken, directory, sessionName);
+        if (resp && resp.id) {
+          currentSessionId = resp.id;
+          this.core.setCurrentSession(resp.id);
+          await this.core.updateRemoteSessionId(sessionId, resp.id);
+          console.info('[ChatViewModel] Backend session created and linked:', currentSessionId);
+        } else {
+          throw new Error('Failed to create backend session');
+        }
+      } catch (e) {
+        const errorMsg: DisplayMessage = {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: `创建后端会话失败: ${e.message || e}`,
+          timestamp: Date.now()
+        };
+        onUpdate([errorMsg]);
+        return '';
+      }
+    }
+
+    return currentSessionId;
+  }
+
+  async performSendMessage(
+    backendUrl: string,
+    authToken: string,
+    directory: string,
+    realSessionId: string,
+    text: string,
+    preferredModel: string | undefined,
+    loadingId: string,
+    onUpdate: (messages: DisplayMessage[]) => void,
+    onError: (msg: string) => void
+  ): Promise<void> {
+    this.cancelRequest();
+    this.currentRequest = http.createHttp();
+    const url = this.buildUrlWithDir(backendUrl, `/session/${encodeURIComponent(realSessionId)}/message`, directory);
+
+    let model: ModelRef | undefined;
+    if (preferredModel && preferredModel.includes('/')) {
+      const parts = preferredModel.split('/');
+      model = { providerID: parts[0], modelID: parts[1] };
+    }
+
+    const body: MessageBody = {
+      parts: [{ type: 'text', text: text }]
+    };
+
+    console.info('[ChatViewModel] >>> performSendMessage params:');
+    console.info('[ChatViewModel]   preferredModel:', JSON.stringify(preferredModel));
+    console.info('[ChatViewModel]   model:', JSON.stringify(model));
+    console.info('[ChatViewModel]   agent:', 'build');
+    console.info('[ChatViewModel]   body:', JSON.stringify(body));
+
+    try {
+      const result = await new Promise<http.HttpResponse>((resolve, reject) => {
+        this.currentRequest!.request(
+          url,
+          {
+            method: http.RequestMethod.POST,
+            header: this.getHeaders(backendUrl, authToken, directory),
+            extraData: JSON.stringify(body),
+            connectTimeout: 120000,
+            readTimeout: 120000,
+          },
+          (err, data) => {
+            if (err) reject(err);
+            else resolve(data);
+          }
+        );
+      });
+
+      if (result.responseCode === 200) {
+        const response = JSON.parse(result.result as string) as OpenCodeMessage;
+        const content = this.formatMessage(response);
+        const assistantMsg: DisplayMessage = {
+          id: response.info.id || `resp-${Date.now()}`,
+          role: 'assistant',
+          content: content || '完成',
+          timestamp: Date.now()
+        };
+        const cached = await this.core.getCachedMessages(realSessionId);
+        cached.push(response);
+        await this.core.cacheMessages(realSessionId, cached);
+        return;
+      } else {
+        onError(`请求失败: HTTP ${result.responseCode}`);
+      }
+    } catch (e) {
+      onError(`错误: ${e}`);
+    } finally {
+      this.cancelRequest();
+    }
+  }
+}

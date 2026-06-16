@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/MainPage",
+    "pages/BackendDetail",
+    "pages/BackendWebView",
+    "pages/SessionDetail",
+    "pages/ChatPage",
+    "pages/ContainerList"
+  ]
+}
