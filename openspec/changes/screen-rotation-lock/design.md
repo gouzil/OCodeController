@@ -43,17 +43,17 @@ window.getLastWindow(this.context, (err, win) => {
   if (isLocked) {
     win.setPreferredOrientation(window.Orientation.PORTRAIT);
   } else {
-    win.setPreferredOrientation(window.Orientation.AUTO);
+    win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED);
   }
 });
 ```
 
 - `Orientation.PORTRAIT`：锁定竖屏
-- `Orientation.AUTO`：跟随系统重力感应
+- `Orientation.AUTO_ROTATION_RESTRICTED`：跟随系统自动旋转设置
 
 ### 2. 设置变更时实时应用
 
-**决策**：在 `AboutPage.ets` 的设置切换回调中直接调用 `window` API 应用方向变更。
+**决策**：在 `AboutPage.ets` 的设置切换回调中通过 `OpenCodeCore.applyScreenOrientation` 应用方向变更，window API 只封装在 `OpenCodeCore` 中。
 
 ```typescript
 .onClick(() => {
@@ -77,7 +77,7 @@ public static async applyScreenOrientation(context: Context, isLocked: boolean):
   if (isLocked) {
     win.setPreferredOrientation(window.Orientation.PORTRAIT);
   } else {
-    win.setPreferredOrientation(window.Orientation.AUTO);
+    win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED);
   }
 }
 ```

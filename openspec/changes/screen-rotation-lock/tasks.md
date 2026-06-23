@@ -1,19 +1,19 @@
 ## 1. 在 OpenCodeCore 中添加方向应用方法
 
-- [ ] 1.1 在 `OpenCodeCore.ts` 中添加 `public static async applyScreenOrientation(context: Context, isLocked: boolean): Promise<void>` 方法
-- [ ] 1.2 在方法内使用 `window.getLastWindow(context)` 获取当前窗口
-- [ ] 1.3 调用 `window.setPreferredOrientation` 设置 `Orientation.PORTRAIT`（锁定时）或 `Orientation.AUTO`（跟随系统时）
+- [x] 1.1 在 `OpenCodeCore.ts` 中添加 `public static async applyScreenOrientation(context: Context, isLocked: boolean): Promise<void>` 方法
+- [x] 1.2 在方法内使用 `window.getLastWindow(context)` 获取当前窗口
+- [x] 1.3 调用 `window.setPreferredOrientation` 设置 `Orientation.PORTRAIT`（锁定时）或 `Orientation.AUTO_ROTATION_RESTRICTED`（跟随系统时）
 
 ## 2. 修改 EntryAbility 应用方向
 
-- [ ] 2.1 在 `EntryAbility.ets` 的 `onWindowStageCreate` 中，在 `loadContent` 完成后调用 `OpenCodeCore.applyScreenOrientation` 应用当前设置
-- [ ] 2.2 在 `onForeground` 中重新应用屏幕方向
+- [x] 2.1 在 `EntryAbility.ets` 的 `onWindowStageCreate` 中，在 `loadContent` 完成后调用 `OpenCodeCore.applyScreenOrientation` 应用当前设置
+- [x] 2.2 在 `onForeground` 中重新应用屏幕方向
 
 ## 3. 修改 AboutPage 实时应用方向
 
-- [ ] 3.1 在 `AboutPage.ets` 中，导入 `OpenCodeCore` 和 `window`
-- [ ] 3.2 在"跟随系统"选项的 `onClick` 中，调用 `OpenCodeCore.applyScreenOrientation` 传入 `false`
-- [ ] 3.3 在"锁定竖屏"选项的 `onClick` 中，调用 `OpenCodeCore.applyScreenOrientation` 传入 `true`
+- [x] 3.1 在 `AboutPage.ets` 中使用 `OpenCodeCore` 复用方向设置工具
+- [x] 3.2 在"跟随系统"选项的 `onClick` 中，调用 `OpenCodeCore.applyScreenOrientation` 传入 `false`
+- [x] 3.3 在"锁定竖屏"选项的 `onClick` 中，调用 `OpenCodeCore.applyScreenOrientation` 传入 `true`
 
 ## 4. 测试验证
 

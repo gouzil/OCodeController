@@ -2,6 +2,7 @@ import dataPreferences from '@ohos.data.preferences';
 import common from '@ohos.app.ability.common';
 import http from '@ohos.net.http';
 import util from '@ohos.util';
+import { window } from '@kit.ArkUI';
 import { OpenCodeApiClient, OpenCodeSession, OpenCodeMessage } from './OpenCodeApiClient';
 
 export { OpenCodeSession, OpenCodeMessage, OpenCodeProviderModel } from './OpenCodeApiClient';
@@ -319,6 +320,12 @@ export class OpenCodeCore {
 
   public getContext(): common.UIAbilityContext | null {
     return this.context;
+  }
+
+  public static async applyScreenOrientation(context: common.Context, isLocked: boolean): Promise<void> {
+    const currentWindow = await window.getLastWindow(context);
+    const orientation = isLocked ? window.Orientation.PORTRAIT : window.Orientation.AUTO_ROTATION_RESTRICTED;
+    await currentWindow.setPreferredOrientation(orientation);
   }
 
   // 注册会话变更监听器

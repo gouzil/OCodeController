@@ -1314,6 +1314,12 @@ export struct AboutPage {
               this.isRotationLocked = false;
               this.core.setRotationLocked(false);
               AppStorage.setOrCreate<boolean>('rotationLocked', false);
+              const context = this.core.getContext();
+              if (context) {
+                OpenCodeCore.applyScreenOrientation(context, false).catch(() => {
+                  console.error('[AboutPage] Failed to apply screen orientation');
+                });
+              }
             })
 
             Divider().height(0.5).color(this.themeBorderSecondary).margin({ left: 16 })
@@ -1343,6 +1349,12 @@ export struct AboutPage {
               this.isRotationLocked = true;
               this.core.setRotationLocked(true);
               AppStorage.setOrCreate<boolean>('rotationLocked', true);
+              const context = this.core.getContext();
+              if (context) {
+                OpenCodeCore.applyScreenOrientation(context, true).catch(() => {
+                  console.error('[AboutPage] Failed to apply screen orientation');
+                });
+              }
             })
           }
           .width('100%')
