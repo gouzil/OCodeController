@@ -1316,7 +1316,7 @@ export struct AboutPage {
               AppStorage.setOrCreate<boolean>('rotationLocked', false);
               const context = this.core.getContext();
               if (context) {
-                OpenCodeCore.applyScreenOrientation(context, false).catch(() => {
+                OpenCodeCore.applyScreenOrientation(context, false, true).catch(() => {
                   console.error('[AboutPage] Failed to apply screen orientation');
                 });
               }

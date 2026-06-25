@@ -10,8 +10,8 @@
 
 #### Scenario: 窗口创建且旋转未锁定
 - **当** `EntryAbility.onWindowStageCreate` 被调用且 `rotationLocked` 为 `false` 时
-- **则** 系统将运行时窗口方向偏好设置为 `Orientation.UNSPECIFIED`
-- **并且** 窗口由系统和 ability manifest 中的 `auto_rotation_unspecified` 决定后续旋转
+- **则** 系统不设置运行时窗口方向偏好
+- **并且** 窗口由系统和 ability manifest 中的 `auto_rotation_restricted` 决定后续旋转
 
 ### Requirement: 设置变更时实时应用
 
@@ -27,7 +27,8 @@
 - **当** 用户点击"跟随系统"选项时
 - **则** 系统将 `rotationLocked` 保存到本地存储
 - **并且** 将 `AppStorage` 中的 `rotationLocked` 设置为 `false`
-- **并且** 将运行时窗口方向偏好设置为 `Orientation.UNSPECIFIED`
+- **并且** 系统启动新的 `EntryAbility` 实例并结束旧实例，以清除旧窗口上的运行时竖屏偏好
+- **并且** 新窗口由 ability manifest 中的 `auto_rotation_restricted` 跟随系统旋转
 
 ### Requirement: 应用切换前台时重新应用设置
 
@@ -36,4 +37,5 @@
 #### Scenario: 应用从后台切换到前台
 - **当** `EntryAbility.onForeground` 被调用时
 - **则** 系统读取当前 `rotationLocked` 设置
-- **并且** 重新应用对应的屏幕方向
+- **并且** 当 `rotationLocked` 为 `true` 时重新应用竖屏方向
+- **并且** 当 `rotationLocked` 为 `false` 时不设置运行时窗口方向偏好

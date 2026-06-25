@@ -1,5 +1,6 @@
 import dataPreferences from '@ohos.data.preferences';
 import common from '@ohos.app.ability.common';
+import { Want } from '@kit.AbilityKit';
 import http from '@ohos.net.http';
 import util from '@ohos.util';
 import { window } from '@kit.ArkUI';
@@ -322,10 +323,27 @@ export class OpenCodeCore {
     return this.context;
   }
 
-  public static async applyScreenOrientation(context: common.Context, isLocked: boolean): Promise<void> {
-    const currentWindow = await window.getLastWindow(context);
-    const orientation = isLocked ? window.Orientation.PORTRAIT : window.Orientation.UNSPECIFIED;
-    await currentWindow.setPreferredOrientation(orientation);
+  public static async applyScreenOrientation(
+    context: common.UIAbilityContext,
+    isLocked: boolean,
+    recreateWhenUnlocked: boolean = false
+  ): Promise<void> {
+    if (isLocked) {
+      const currentWindow = await window.getLastWindow(context);
+      await currentWindow.setPreferredOrientation(window.Orientation.PORTRAIT);
+      return;
+    }
+
+    if (!recreateWhenUnlocked) {
+      return;
+    }
+
+    const restartWant: Want = {
+      bundleName: context.abilityInfo.bundleName,
+      abilityName: context.abilityInfo.name
+    };
+    await context.startAbility(restartWant);
+    await context.terminateSelf();
   }
 
   // 注册会话变更监听器
